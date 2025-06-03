@@ -2,3 +2,5 @@ schwab_refresh_token.txt
 schwab_access_token.txt
 .env
 venv
+data
+__pycache__
