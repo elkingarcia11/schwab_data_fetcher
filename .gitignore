@@ -1,6 +1,8 @@
 schwab_refresh_token.txt
 schwab_access_token.txt
+schwab_credentials.env
 .env
 venv
 data
 __pycache__
+email_credentials.env
