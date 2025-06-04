@@ -8,6 +8,7 @@ Functions to:
 4. Filter and append new data to CSV files
 5. Aggregate 1m data into 5m and 15m candles
 6. Run continuously during market hours with smart token management
+7. Track trading positions based on technical indicators with email alerts
 """
 
 import requests
@@ -22,6 +23,9 @@ import base64
 import time as time_module
 import signal
 import sys
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 class MarketDataUpdater:
     def __init__(self):
@@ -32,6 +36,23 @@ class MarketDataUpdater:
         self.last_token_refresh = None
         self.token_refresh_interval = 20 * 60  # 20 minutes in seconds
         self.running = True
+        
+        # Position tracking for all timeframes
+        self.positions = {
+            '1m': 'CLOSED',
+            '5m': 'CLOSED', 
+            '15m': 'CLOSED'
+        }
+        
+        # Track opening prices for P&L calculation
+        self.opening_prices = {
+            '1m': None,
+            '5m': None,
+            '15m': None
+        }
+        
+        # Email configuration
+        self.email_config = self.load_email_config()
         
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -235,6 +256,7 @@ class MarketDataUpdater:
         print(f"🕒 Market Hours: {self.market_open} - {self.market_close} ET")
         print(f"🔄 Token Refresh: Every {self.token_refresh_interval // 60} minutes")
         print(f"⏰ API Calls: 5 seconds after each minute")
+        print(f"🎯 Position Tracking: ENABLED for all timeframes")
         print("=" * 60)
         
         if not self.is_market_day():
@@ -253,6 +275,16 @@ class MarketDataUpdater:
         
         if bootstrap_success:
             print("✅ Bootstrap phase completed successfully")
+            
+            # Analyze historical positions after bootstrap
+            print("\n🎯 POSITION ANALYSIS: Analyzing historical data...")
+            print("-" * 60)
+            try:
+                historical_results = self.analyze_historical_positions(symbol)
+                print(f"✅ Historical position analysis completed")
+                print(f"   Found {historical_results['total_signals']} total position signals")
+            except Exception as e:
+                print(f"⚠️  Historical analysis had issues: {e}")
         else:
             print("⚠️  Bootstrap phase had some issues, but continuing...")
         
@@ -297,6 +329,18 @@ class MarketDataUpdater:
                 
                 if success:
                     print(f"✅ Incremental cycle #{iteration_count} completed successfully")
+                    
+                    # Check for live position signals after data update
+                    print(f"🎯 Checking live position signals...")
+                    signals_found = self.check_live_position_signals(symbol)
+                    
+                    if signals_found:
+                        print(f"🚨 New position signals detected and processed!")
+                    else:
+                        print(f"📊 No new position signals at this time")
+                        
+                    # Show current position status
+                    print(f"📊 Current Positions: 1m:{self.positions['1m']} | 5m:{self.positions['5m']} | 15m:{self.positions['15m']}")
                 else:
                     print(f"⚠️  Incremental cycle #{iteration_count} had some issues")
                 
@@ -314,6 +358,7 @@ class MarketDataUpdater:
         print("\n🏁 Continuous data collection stopped")
         print(f"📊 Bootstrap: ✅ Completed")
         print(f"📊 Incremental cycles: {iteration_count}")
+        print(f"🎯 Final Positions: 1m:{self.positions['1m']} | 5m:{self.positions['5m']} | 15m:{self.positions['15m']}")
         print(f"📊 Total data collection session complete")
 
     def get_latest_timestamp_from_csv(self, symbol: str, period: str) -> Optional[int]:
@@ -990,13 +1035,431 @@ class MarketDataUpdater:
         
         return success
 
+    def load_email_config(self) -> Dict:
+        """Load email configuration from email_credentials.env file"""
+        email_config = {
+            'enabled': False,
+            'smtp_server': 'smtp.gmail.com',
+            'smtp_port': 587,
+            'sender': '',
+            'password': '',
+            'recipients': []
+        }
+        
+        credentials_file = 'email_credentials.env'
+        
+        if os.path.exists(credentials_file):
+            try:
+                with open(credentials_file, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#') and '=' in line:
+                            key, value = line.split('=', 1)
+                            key = key.strip()
+                            value = value.strip()
+                            
+                            if key == 'EMAIL_ALERTS_ENABLED':
+                                email_config['enabled'] = value.lower() in ['true', '1', 'yes']
+                            elif key == 'EMAIL_SENDER':
+                                email_config['sender'] = value
+                            elif key == 'EMAIL_PASSWORD':
+                                email_config['password'] = value
+                            elif key == 'EMAIL_TO':
+                                # Handle comma-delimited recipients
+                                recipients = [email.strip() for email in value.split(',') if email.strip()]
+                                email_config['recipients'] = recipients
+                
+                # Validate configuration
+                if (email_config['enabled'] and 
+                    email_config['sender'] and 
+                    email_config['password'] and 
+                    email_config['recipients']):
+                    print(f"📧 Email notifications enabled")
+                    print(f"   Sender: {email_config['sender']}")
+                    print(f"   Recipients: {', '.join(email_config['recipients'])}")
+                else:
+                    email_config['enabled'] = False
+                    print("📧 Email notifications disabled (missing or invalid configuration)")
+                    
+            except Exception as e:
+                print(f"⚠️  Error loading email configuration: {e}")
+                email_config['enabled'] = False
+        else:
+            print("📧 Email notifications disabled (email_credentials.env not found)")
+        
+        return email_config
+
+    def send_email_notification(self, subject: str, message: str) -> bool:
+        """Send email notification for position changes to multiple recipients"""
+        if not self.email_config['enabled']:
+            print(f"📧 Email disabled - would send: {subject}")
+            return False
+        
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = self.email_config['sender']
+            msg['To'] = ', '.join(self.email_config['recipients'])
+            msg['Subject'] = subject
+            
+            msg.attach(MIMEText(message, 'plain'))
+            
+            server = smtplib.SMTP(self.email_config['smtp_server'], self.email_config['smtp_port'])
+            server.starttls()
+            server.login(self.email_config['sender'], self.email_config['password'])
+            
+            # Send to all recipients
+            server.send_message(msg, to_addrs=self.email_config['recipients'])
+            server.quit()
+            
+            recipients_str = ', '.join(self.email_config['recipients'])
+            print(f"📧 Email sent to {len(self.email_config['recipients'])} recipients: {subject}")
+            print(f"   Recipients: {recipients_str}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Failed to send email: {e}")
+            return False
+
+    def check_trading_signals(self, symbol: str, period: str, df: pd.DataFrame) -> Tuple[bool, bool, Dict]:
+        """
+        Check trading signals for position management
+        
+        Args:
+            symbol: Stock symbol
+            period: Time period ('1m', '5m', '15m')
+            df: DataFrame with OHLC and indicator data
+            
+        Returns:
+            Tuple of (should_open, should_close, signal_details)
+        """
+        if df.empty or len(df) < 2:
+            return False, False, {}
+        
+        # Get the latest row with non-empty indicators
+        latest_row = None
+        for i in range(len(df) - 1, -1, -1):
+            row = df.iloc[i]
+            if (pd.notna(row.get('ema_7')) and row.get('ema_7') != '' and
+                pd.notna(row.get('vwma_17')) and row.get('vwma_17') != '' and
+                pd.notna(row.get('macd_line')) and row.get('macd_line') != '' and
+                pd.notna(row.get('macd_signal')) and row.get('macd_signal') != '' and
+                pd.notna(row.get('roc_8')) and row.get('roc_8') != ''):
+                latest_row = row
+                break
+        
+        if latest_row is None:
+            return False, False, {}
+        
+        try:
+            # Convert indicator values to float
+            ema_7 = float(latest_row['ema_7'])
+            vwma_17 = float(latest_row['vwma_17'])
+            macd_line = float(latest_row['macd_line'])
+            macd_signal = float(latest_row['macd_signal'])
+            roc_8 = float(latest_row['roc_8'])
+            
+            # Check the 3 conditions
+            condition_1 = ema_7 > vwma_17  # 7 EMA > 17 VWMA
+            condition_2 = macd_line > macd_signal  # MACD Line > MACD Signal
+            condition_3 = roc_8 > 0  # ROC > 0
+            
+            conditions_met = sum([condition_1, condition_2, condition_3])
+            
+            signal_details = {
+                'timestamp': latest_row['timestamp'],
+                'datetime': latest_row['datetime'],
+                'close': latest_row['close'],
+                'ema_7': ema_7,
+                'vwma_17': vwma_17,
+                'macd_line': macd_line,
+                'macd_signal': macd_signal,
+                'roc_8': roc_8,
+                'condition_1_ema_vwma': condition_1,
+                'condition_2_macd': condition_2,
+                'condition_3_roc': condition_3,
+                'conditions_met': conditions_met
+            }
+            
+            current_position = self.positions[period]
+            
+            # Logic for opening/closing positions
+            should_open = (current_position == 'CLOSED' and conditions_met == 3)
+            should_close = (current_position == 'OPENED' and conditions_met <= 1)  # Any 2 conditions fail = 1 or 0 met
+            
+            return should_open, should_close, signal_details
+            
+        except (ValueError, TypeError, KeyError) as e:
+            print(f"⚠️  Error processing signals for {symbol}_{period}: {e}")
+            return False, False, {}
+
+    def process_position_change(self, symbol: str, period: str, action: str, signal_details: Dict) -> bool:
+        """
+        Process position changes and send email notifications
+        
+        Args:
+            symbol: Stock symbol
+            period: Time period
+            action: 'OPEN' or 'CLOSE'
+            signal_details: Dictionary with signal information
+            
+        Returns:
+            True if position changed, False otherwise
+        """
+        if action not in ['OPEN', 'CLOSE']:
+            return False
+        
+        old_position = self.positions[period]
+        new_position = 'OPENED' if action == 'OPEN' else 'CLOSED'
+        
+        # Only proceed if position actually changes
+        if old_position == new_position:
+            return False
+        
+        # Update position
+        self.positions[period] = new_position
+        
+        # Format signal details for email
+        dt = signal_details.get('datetime', 'Unknown')
+        price = signal_details.get('close', 'Unknown')
+        conditions = signal_details.get('conditions_met', 0)
+        
+        # P&L calculation for closing positions
+        pnl_info = ""
+        if action == 'OPEN':
+            # Store opening price
+            self.opening_prices[period] = float(price) if price != 'Unknown' else None
+            pnl_info = f"Opening position at ${price}"
+        elif action == 'CLOSE' and self.opening_prices[period] is not None:
+            # Calculate P&L
+            opening_price = self.opening_prices[period]
+            closing_price = float(price) if price != 'Unknown' else None
+            
+            if closing_price is not None:
+                pnl = closing_price - opening_price
+                pnl_percent = (pnl / opening_price) * 100 if opening_price != 0 else 0
+                
+                pnl_symbol = "📈" if pnl >= 0 else "📉"
+                pnl_info = f"""
+P&L Analysis:
+- Opening Price: ${opening_price:.4f}
+- Closing Price: ${closing_price:.4f}
+- Profit/Loss: {pnl_symbol} ${pnl:.4f} ({pnl_percent:+.2f}%)"""
+                
+                # Reset opening price after closing
+                self.opening_prices[period] = None
+            else:
+                pnl_info = "P&L calculation unavailable (invalid closing price)"
+        elif action == 'CLOSE':
+            pnl_info = "P&L calculation unavailable (no opening price recorded)"
+        
+        # Create detailed signal info
+        signal_info = f"""
+Position Change Details:
+- Symbol: {symbol}
+- Timeframe: {period}
+- Action: {action} POSITION
+- Time: {dt}
+- Price: ${price}
+- Conditions Met: {conditions}/3
+
+{pnl_info}
+
+Technical Indicators:
+- 7 EMA: {signal_details.get('ema_7', 'N/A'):.4f}
+- 17 VWMA: {signal_details.get('vwma_17', 'N/A'):.4f}
+- MACD Line: {signal_details.get('macd_line', 'N/A'):.6f}
+- MACD Signal: {signal_details.get('macd_signal', 'N/A'):.6f}
+- ROC-8: {signal_details.get('roc_8', 'N/A'):.2f}%
+
+Condition Status:
+- ✅ EMA > VWMA: {signal_details.get('condition_1_ema_vwma', False)}
+- ✅ MACD > Signal: {signal_details.get('condition_2_macd', False)} 
+- ✅ ROC > 0: {signal_details.get('condition_3_roc', False)}
+
+Current Positions Status:
+- 1m: {self.positions['1m']}
+- 5m: {self.positions['5m']}
+- 15m: {self.positions['15m']}
+"""
+
+        # Email subject with P&L for closes
+        subject = f"🚨 {symbol} {period} - {action} POSITION at ${price}"
+        
+        # Add P&L to subject for closes when available
+        if action == 'CLOSE' and 'Profit/Loss:' in pnl_info:
+            try:
+                # Extract P&L amount from pnl_info
+                for line in pnl_info.split('\n'):
+                    if 'Profit/Loss:' in line:
+                        # Extract the P&L value and symbol
+                        if '📈' in line:
+                            pnl_match = line.split('$')[1].split(' ')[0]
+                            subject = f"🚨 {symbol} {period} - {action} POSITION at ${price} 📈${pnl_match}"
+                        elif '📉' in line:
+                            pnl_match = line.split('$')[1].split(' ')[0]
+                            subject = f"🚨 {symbol} {period} - {action} POSITION at ${price} 📉${pnl_match}"
+                        break
+            except:
+                pass  # Keep original subject if parsing fails
+        
+        # Console output with P&L
+        print(f"\n🚨 POSITION CHANGE: {symbol}_{period}")
+        print(f"   Action: {action} POSITION")
+        print(f"   Time: {dt}")
+        print(f"   Price: ${price}")
+        print(f"   Conditions: {conditions}/3")
+        print(f"   EMA>VWMA: {signal_details.get('condition_1_ema_vwma', False)}")
+        print(f"   MACD>Sig: {signal_details.get('condition_2_macd', False)}")
+        print(f"   ROC>0: {signal_details.get('condition_3_roc', False)}")
+        
+        # Show P&L in console for closes
+        if action == 'CLOSE' and 'Profit/Loss:' in pnl_info:
+            pnl_lines = pnl_info.split('\n')
+            for line in pnl_lines:
+                if 'Profit/Loss:' in line:
+                    print(f"   {line.strip()}")
+                    break
+        
+        # Send email notification
+        self.send_email_notification(subject, signal_info)
+        
+        return True
+
+    def analyze_historical_positions(self, symbol: str) -> Dict:
+        """
+        Analyze all historical data to track position changes retrospectively
+        
+        Args:
+            symbol: Stock symbol to analyze
+            
+        Returns:
+            Dictionary with analysis results
+        """
+        print(f"\n📊 Analyzing Historical Positions for {symbol}")
+        print("=" * 60)
+        
+        results = {
+            'total_signals': 0,
+            'open_signals': 0,
+            'close_signals': 0,
+            'timeframes': {}
+        }
+        
+        for period in ['1m', '5m', '15m']:
+            print(f"\n🔍 Analyzing {period} timeframe...")
+            
+            csv_path = os.path.join(self.data_dir, f"{symbol}_{period}.csv")
+            if not os.path.exists(csv_path):
+                print(f"   ❌ No data file found: {csv_path}")
+                continue
+            
+            try:
+                df = pd.read_csv(csv_path)
+                if df.empty:
+                    print(f"   📊 No data in {csv_path}")
+                    continue
+                
+                # Reset position for this timeframe analysis
+                self.positions[period] = 'CLOSED'
+                
+                # Reset opening price for this timeframe
+                self.opening_prices[period] = None
+                
+                timeframe_results = {
+                    'open_signals': [],
+                    'close_signals': [],
+                    'total_opens': 0,
+                    'total_closes': 0
+                }
+                
+                # Analyze each row chronologically
+                for i in range(len(df)):
+                    row_df = df.iloc[:i+1]  # All data up to current row
+                    
+                    should_open, should_close, signal_details = self.check_trading_signals(symbol, period, row_df)
+                    
+                    if should_open:
+                        success = self.process_position_change(symbol, period, 'OPEN', signal_details)
+                        if success:
+                            timeframe_results['open_signals'].append(signal_details)
+                            timeframe_results['total_opens'] += 1
+                            results['open_signals'] += 1
+                            results['total_signals'] += 1
+                    
+                    elif should_close:
+                        success = self.process_position_change(symbol, period, 'CLOSE', signal_details)
+                        if success:
+                            timeframe_results['close_signals'].append(signal_details)
+                            timeframe_results['total_closes'] += 1
+                            results['close_signals'] += 1
+                            results['total_signals'] += 1
+                
+                results['timeframes'][period] = timeframe_results
+                
+                print(f"   📈 {period} Analysis Complete:")
+                print(f"      Opens: {timeframe_results['total_opens']}")
+                print(f"      Closes: {timeframe_results['total_closes']}")
+                print(f"      Final Position: {self.positions[period]}")
+                
+            except Exception as e:
+                print(f"   ❌ Error analyzing {period}: {e}")
+        
+        print(f"\n📊 Historical Analysis Summary:")
+        print(f"   Total Signals: {results['total_signals']}")
+        print(f"   Open Signals: {results['open_signals']}")
+        print(f"   Close Signals: {results['close_signals']}")
+        print(f"\n📊 Final Position States:")
+        for period in ['1m', '5m', '15m']:
+            print(f"   {period}: {self.positions[period]}")
+        
+        return results
+
+    def check_live_position_signals(self, symbol: str) -> bool:
+        """
+        Check for position signals in latest data during continuous mode
+        
+        Args:
+            symbol: Stock symbol to check
+            
+        Returns:
+            True if any signals were processed, False otherwise
+        """
+        signals_found = False
+        
+        for period in ['1m', '5m', '15m']:
+            csv_path = os.path.join(self.data_dir, f"{symbol}_{period}.csv")
+            if not os.path.exists(csv_path):
+                continue
+            
+            try:
+                df = pd.read_csv(csv_path)
+                if df.empty:
+                    continue
+                
+                should_open, should_close, signal_details = self.check_trading_signals(symbol, period, df)
+                
+                if should_open:
+                    success = self.process_position_change(symbol, period, 'OPEN', signal_details)
+                    if success:
+                        signals_found = True
+                
+                elif should_close:
+                    success = self.process_position_change(symbol, period, 'CLOSE', signal_details)
+                    if success:
+                        signals_found = True
+                        
+            except Exception as e:
+                print(f"⚠️  Error checking live signals for {symbol}_{period}: {e}")
+        
+        return signals_found
+
 
 def main():
-    """Main function with options for single run or continuous collection"""
+    """Main function with options for single run, continuous collection, or position analysis"""
     updater = MarketDataUpdater()
     
-    print("🚀 Schwab Market Data Updater")
-    print("=" * 50)
+    print("🚀 Schwab Market Data Updater with Position Tracking")
+    print("=" * 60)
     
     # Check command line arguments
     import sys
@@ -1011,25 +1474,68 @@ def main():
             
             if success:
                 print(f"\n🎉 Successfully updated all timeframes for {symbol}!")
+                
+                # Run position analysis after single update
+                print(f"\n🎯 Running position analysis...")
+                try:
+                    results = updater.analyze_historical_positions(symbol)
+                    print(f"✅ Position analysis completed - {results['total_signals']} signals found")
+                except Exception as e:
+                    print(f"⚠️  Position analysis failed: {e}")
             else:
                 print(f"\n❌ Some issues occurred during update for {symbol}")
                 
+        elif sys.argv[1] == "--analyze":
+            # Historical position analysis only
+            symbol = sys.argv[2] if len(sys.argv) > 2 else "SPY"
+            print(f"🎯 Running historical position analysis for {symbol}")
+            
+            try:
+                results = updater.analyze_historical_positions(symbol)
+                print(f"\n🎉 Position analysis completed!")
+                print(f"   Total signals: {results['total_signals']}")
+                print(f"   Opens: {results['open_signals']}")
+                print(f"   Closes: {results['close_signals']}")
+            except Exception as e:
+                print(f"\n❌ Position analysis failed: {e}")
+                
         elif sys.argv[1] == "--help":
             print("Usage:")
-            print("  python market_data_updater.py                    # Continuous mode (default)")
-            print("  python market_data_updater.py --single [SYMBOL]  # Single run mode")
-            print("  python market_data_updater.py --help            # Show this help")
-            print("\nDefault symbol: SPY")
+            print("  python market_data_updater.py                     # Continuous mode with position tracking")
+            print("  python market_data_updater.py --single [SYMBOL]   # Single run + position analysis")
+            print("  python market_data_updater.py --analyze [SYMBOL]  # Historical position analysis only")
+            print("  python market_data_updater.py --help             # Show this help")
+            print()
+            print("Position Tracking Features:")
+            print("  • Opens when: 7EMA > 17VWMA AND MACD > Signal AND ROC > 0")
+            print("  • Closes when: Any 2 of the 3 conditions fail")
+            print("  • Email notifications for all position changes")
+            print("  • Tracks 1m, 5m, and 15m timeframes independently")
+            print()
+            print("Email Configuration (create email_credentials.env):")
+            print("  EMAIL_ALERTS_ENABLED=true")
+            print("  EMAIL_SENDER=your_email@gmail.com")
+            print("  EMAIL_PASSWORD=your_app_password")
+            print("  EMAIL_TO=recipient1@gmail.com, recipient2@gmail.com")
+            print()
+            print("Gmail Setup Notes:")
+            print("  • Use App Password instead of regular password")
+            print("  • Go to Google Account > Security > 2-Step Verification > App passwords")
+            print("  • Generate app password for 'Mail' and use as EMAIL_PASSWORD")
+            print("  • Multiple recipients: separate with commas in EMAIL_TO")
+            print()
+            print("Default symbol: SPY")
             
         else:
             symbol = sys.argv[1]
-            print(f"📊 Running continuous collection for {symbol}")
+            print(f"📊 Running continuous collection with position tracking for {symbol}")
             updater.run_continuous_data_collection(symbol)
     else:
         # Default: Continuous mode
         symbol = "SPY"
-        print(f"📊 Running continuous collection for {symbol}")
-        print("   Use --single for one-time update")
+        print(f"📊 Running continuous collection with position tracking for {symbol}")
+        print("   Use --single for one-time update + analysis")
+        print("   Use --analyze for historical analysis only")
         print("   Use --help for usage information")
         print()
         updater.run_continuous_data_collection(symbol)
