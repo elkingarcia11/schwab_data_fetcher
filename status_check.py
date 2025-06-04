@@ -77,7 +77,12 @@ def check_status():
                         else:
                             status = f"❌ Old ({age_minutes/(60*24):.1f}d ago)"
                         
+                        # Check indicator columns
+                        expected_indicators = ['ema_7', 'vwma_17', 'ema_12', 'ema_26', 'macd_line', 'macd_signal', 'roc_8']
+                        available_indicators = [col for col in expected_indicators if col in df.columns]
+                        
                         print(f"      {period}: {status} - Latest: {latest_datetime.strftime('%m/%d %H:%M')}")
+                        print(f"           Indicators: {len(available_indicators)}/7 ({', '.join(available_indicators)})")
                     else:
                         print(f"      {period}: ❌ Empty or invalid data")
                 except Exception as e:

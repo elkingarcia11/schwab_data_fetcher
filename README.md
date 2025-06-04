@@ -25,8 +25,8 @@ data/
 Each CSV contains:
 
 ```csv
-timestamp,datetime,open,high,low,close,volume,ema_7,vwma_17
-1749043800000,2025-06-04 09:30:00,595.50,595.80,595.45,595.72,45120,595.68,595.61
+timestamp,datetime,open,high,low,close,volume,ema_7,vwma_17,ema_12,ema_26,macd_line,macd_signal,roc_8
+1749043800000,2025-06-04 09:30:00,595.50,595.80,595.45,595.72,45120,595.68,595.61,595.65,595.58,0.070000,-0.002341,1.25
 ```
 
 ## 🚀 Quick Start
@@ -201,19 +201,60 @@ python status_check.py
 
 ## 📈 Technical Indicators
 
-### **7 EMA (Exponential Moving Average)**
+### **Core Trend Indicators**
 
-- **Purpose**: Fast-reacting trend indicator
+**7 EMA (Exponential Moving Average)**
+
+- **Purpose**: Fast-reacting short-term trend indicator
 - **Formula**: `EMA = (Price × 0.25) + (Previous EMA × 0.75)`
-- **Calculation**: Uses 2/(period+1) smoothing factor
-- **Updates**: Recalculated for entire dataset after new data
+- **Use**: Quick trend identification and entry signals
 
-### **17 VWMA (Volume Weighted Moving Average)**
+**12 EMA (Exponential Moving Average)**
+
+- **Purpose**: Medium-term trend and MACD component
+- **Formula**: `EMA = (Price × 0.154) + (Previous EMA × 0.846)`
+- **Use**: Part of MACD calculation, medium-term momentum
+
+**26 EMA (Exponential Moving Average)**
+
+- **Purpose**: Longer-term trend and MACD component
+- **Formula**: `EMA = (Price × 0.074) + (Previous EMA × 0.926)`
+- **Use**: Part of MACD calculation, trend confirmation
+
+### **Volume-Based Indicators**
+
+**17 VWMA (Volume Weighted Moving Average)**
 
 - **Purpose**: Volume-adjusted price average
 - **Formula**: `VWMA = Sum(Price × Volume) / Sum(Volume)`
-- **Benefit**: More responsive to high-volume movements
-- **Updates**: Recalculated for entire dataset after new data
+- **Use**: More accurate price average considering volume impact
+
+### **Momentum Indicators**
+
+**MACD Line (Moving Average Convergence Divergence)**
+
+- **Purpose**: Momentum oscillator showing relationship between EMAs
+- **Formula**: `MACD = 12 EMA - 26 EMA`
+- **Use**: Trend changes, momentum shifts, bullish/bearish crossovers
+
+**MACD Signal Line**
+
+- **Purpose**: Signal generation for MACD strategy
+- **Formula**: `Signal = 9 EMA of MACD Line`
+- **Use**: Buy/sell signals when MACD crosses above/below signal line
+
+**ROC-8 (Rate of Change - 8 Period)**
+
+- **Purpose**: Percentage price change over 8 periods
+- **Formula**: `ROC = ((Current Price - Price 8 periods ago) / Price 8 periods ago) × 100`
+- **Use**: Momentum measurement, overbought/oversold conditions
+
+### **Calculation Details**
+
+- **Real-time Updates**: All indicators recalculated after new data arrives
+- **Historical Context**: Sufficient lookback periods for accurate calculations
+- **Multi-timeframe**: Independent calculations for 1m, 5m, and 15m data
+- **Precision**: EMAs to 4 decimals, MACD to 6 decimals, ROC to 2 decimals
 
 ## 🔧 Production Deployment
 
@@ -301,8 +342,9 @@ ls -la data/*.csv | awk '{print $6, $7, $8, $9}'
 **CSV file issues:**
 
 - ✅ Check file permissions in `data/` directory
-- ✅ Verify CSV headers: `timestamp,datetime,open,high,low,close,volume,ema_7,vwma_17`
+- ✅ Verify CSV headers: `timestamp,datetime,open,high,low,close,volume,ema_7,vwma_17,ema_12,ema_26,macd_line,macd_signal,roc_8`
 - ✅ Look for pandas/CSV read errors in logs
+- ✅ Ensure sufficient data for indicators (26+ periods for MACD, 8+ for ROC)
 
 ### **Log Analysis**
 
