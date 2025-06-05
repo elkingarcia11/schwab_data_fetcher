@@ -6,3 +6,4 @@ venv
 data
 __pycache__
 email_credentials.env
+.DS_Store
