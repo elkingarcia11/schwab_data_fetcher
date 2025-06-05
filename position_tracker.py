@@ -337,7 +337,7 @@ class PositionTracker:
         except Exception as e:
             print(f"❌ Failed to send email notification: {e}")
 
-    def analyze_historical_positions(self, symbol: str) -> Dict:
+    def analyze_historical_positions(self, symbol: str, suppress_emails: bool = True) -> Dict:
         """
         Analyze historical data for position signals on both LONG and SHORT
         
@@ -382,8 +382,8 @@ class PositionTracker:
                 continue
             
             # Process historical signals for both types
-            long_signals = self._analyze_historical_for_type(symbol, period, 'LONG', df_regular)
-            short_signals = self._analyze_historical_for_type(symbol, period, 'SHORT', df_inverse)
+            long_signals = self._analyze_historical_for_type(symbol, period, 'LONG', df_regular, suppress_emails)
+            short_signals = self._analyze_historical_for_type(symbol, period, 'SHORT', df_inverse, suppress_emails)
             
             # Update totals
             total_signals['LONG'] += long_signals['total']
@@ -411,7 +411,7 @@ class PositionTracker:
             'short_closes': close_signals['SHORT']
         }
 
-    def _analyze_historical_for_type(self, symbol: str, period: str, position_type: str, df: pd.DataFrame) -> Dict:
+    def _analyze_historical_for_type(self, symbol: str, period: str, position_type: str, df: pd.DataFrame, suppress_emails: bool = True) -> Dict:
         """
         Analyze historical data for a specific position type
         
@@ -460,11 +460,14 @@ class PositionTracker:
                 elif signal_result['action'] == 'CLOSE':
                     signals['closes'] += 1
                 
-                # Send historical email notification
-                try:
-                    self._send_position_notification(symbol, period, position_type, signal_result)
-                except Exception as e:
-                    print(f"⚠️  Email notification failed: {e}")
+                # Send historical email notification (only if not suppressed)
+                if not suppress_emails:
+                    try:
+                        self._send_position_notification(symbol, period, position_type, signal_result)
+                    except Exception as e:
+                        print(f"⚠️  Email notification failed: {e}")
+                else:
+                    print(f"📧 Email suppressed for historical {signal_result['action']} signal")
         
         print(f"   ✅ {position_type} {period}: {signals['total']} signals ({signals['opens']} opens, {signals['closes']} closes)")
         return signals

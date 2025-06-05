@@ -8,7 +8,7 @@ import os
 import csv
 import requests
 import pandas as pd
-from datetime import datetime, timezone, time
+from datetime import datetime, timezone, time, timedelta
 import pytz
 from typing import Optional, Dict, List, Tuple
 from schwab_auth import SchwabAuth
@@ -654,4 +654,212 @@ class DataFetcher:
         """
         # Round down to the nearest period boundary
         minute_boundary = (dt.minute // period_minutes) * period_minutes
-        return dt.replace(minute=minute_boundary, second=0, microsecond=0) 
+        return dt.replace(minute=minute_boundary, second=0, microsecond=0)
+
+    def fetch_bootstrap_data(self, symbol: str, frequency: str) -> bool:
+        """
+        Bootstrap data from previous trading day + today's data up to latest complete candle
+        Designed to fetch historical data so position tracking can continue where it left off
+        
+        Args:
+            symbol: Stock symbol (e.g., 'SPY')
+            frequency: Data frequency ('5m', '10m', '15m', '30m')
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        print(f"\n🔄 BOOTSTRAP MODE: Fetching comprehensive historical data for {symbol}_{frequency}")
+        print("=" * 80)
+        
+        current_time = datetime.now(self.et_timezone)
+        
+        # Find the previous trading day (skip weekends)
+        days_back = 1
+        while True:
+            previous_date = current_time.date() - timedelta(days=days_back)
+            previous_weekday = datetime.combine(previous_date, datetime.min.time()).weekday()
+            if previous_weekday < 5:  # Monday = 0, Friday = 4
+                break
+            days_back += 1
+        
+        print(f"📅 Previous trading day: {previous_date}")
+        print(f"📅 Current date: {current_time.date()}")
+        
+        # PHASE 1: Fetch previous trading day data
+        print(f"\n📡 PHASE 1: Fetching previous trading day data...")
+        previous_market_open = self.et_timezone.localize(
+            datetime.combine(previous_date, self.market_open)
+        )
+        previous_market_close = self.et_timezone.localize(
+            datetime.combine(previous_date, self.market_close)
+        )
+        
+        previous_start_ms = int(previous_market_open.astimezone(timezone.utc).timestamp() * 1000)
+        previous_end_ms = int(previous_market_close.astimezone(timezone.utc).timestamp() * 1000)
+        
+        print(f"   Previous day range: {previous_market_open} to {previous_market_close}")
+        
+        # PHASE 2: Fetch today's data up to latest complete candle
+        print(f"\n📡 PHASE 2: Fetching today's data up to latest complete candle...")
+        
+        # Check if today is a market day
+        if current_time.weekday() < 5:  # Monday = 0, Friday = 4
+            today_market_open = self.et_timezone.localize(
+                datetime.combine(current_time.date(), self.market_open)
+            )
+            
+            # Calculate the latest complete candle time
+            frequency_minutes = int(frequency.replace('m', ''))
+            current_period_start = self.get_period_boundary(current_time, frequency_minutes)
+            
+            today_start_ms = int(today_market_open.astimezone(timezone.utc).timestamp() * 1000)
+            today_end_ms = int(current_period_start.astimezone(timezone.utc).timestamp() * 1000)
+            
+            print(f"   Today's range: {today_market_open} to {current_period_start} (latest complete)")
+        else:
+            print("   Today is weekend - skipping today's data")
+            today_start_ms = None
+            today_end_ms = None
+        
+        # Check current data status
+        last_timestamp = self.get_latest_timestamp_from_csv(symbol, frequency)
+        if last_timestamp:
+            last_datetime = datetime.fromtimestamp(last_timestamp / 1000)
+            print(f"📊 Current latest data: {last_datetime} ({last_timestamp})")
+        else:
+            print("📊 No existing data found - full bootstrap required")
+        
+        # Fetch previous day data
+        print(f"\n🔄 Fetching previous trading day data...")
+        previous_success = self._fetch_historical_range(symbol, frequency, previous_start_ms, previous_end_ms, is_bootstrap=True)
+        
+        if not previous_success:
+            print(f"❌ Failed to fetch previous day data for {symbol}_{frequency}")
+            return False
+        
+        # Fetch today's data if it's a market day
+        today_success = True
+        if today_start_ms and today_end_ms and today_start_ms < today_end_ms:
+            print(f"\n🔄 Fetching today's data...")
+            today_success = self._fetch_historical_range(symbol, frequency, today_start_ms, today_end_ms, is_bootstrap=True)
+            
+            if not today_success:
+                print(f"⚠️  Failed to fetch today's data for {symbol}_{frequency} - continuing with previous day data")
+        else:
+            print("📊 No today's data to fetch (weekend or no complete candles yet)")
+        
+        overall_success = previous_success and today_success
+        
+        if overall_success:
+            print(f"✅ Comprehensive bootstrap completed for {symbol}_{frequency}")
+        else:
+            print(f"⚠️  Partial bootstrap completed for {symbol}_{frequency}")
+        
+        return overall_success
+
+    def _fetch_historical_range(self, symbol: str, frequency: str, start_time_ms: int, end_time_ms: int, is_bootstrap: bool = False) -> bool:
+        """
+        Fetch historical data for a specific time range
+        
+        Args:
+            symbol: Stock symbol
+            frequency: Data frequency
+            start_time_ms: Start time in Unix epoch milliseconds
+            end_time_ms: End time in Unix epoch milliseconds
+            is_bootstrap: Whether this is a bootstrap operation
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        # Validate frequency
+        valid_frequencies = ['1m', '5m', '10m', '15m', '30m']
+        if frequency not in valid_frequencies:
+            print(f"❌ Invalid frequency: {frequency}. Must be one of {valid_frequencies}")
+            return False
+        
+        # Convert frequency to API parameters
+        frequency_map = {
+            '1m': {'frequencyType': 'minute', 'frequency': 1},
+            '5m': {'frequencyType': 'minute', 'frequency': 5},
+            '10m': {'frequencyType': 'minute', 'frequency': 10},
+            '15m': {'frequencyType': 'minute', 'frequency': 15},
+            '30m': {'frequencyType': 'minute', 'frequency': 30}
+        }
+        
+        freq_params = frequency_map[frequency]
+        
+        # Get authentication headers
+        headers = self.schwab_auth.get_auth_headers()
+        if not headers:
+            print("❌ No valid authentication available")
+            return False
+        
+        url = "https://api.schwabapi.com/marketdata/v1/pricehistory"
+        
+        params = {
+            'symbol': symbol,
+            'periodType': 'day',
+            'period': 2,
+            'frequencyType': freq_params['frequencyType'],
+            'frequency': freq_params['frequency'],
+            'startDate': start_time_ms,
+            'endDate': end_time_ms,
+            'needExtendedHoursData': 'false',
+            'needPreviousClose': 'false'
+        }
+        
+        operation_type = "Bootstrap" if is_bootstrap else "Historical"
+        print(f"📡 {operation_type} fetch: {symbol} {frequency} from Schwab API...")
+        print(f"   URL: {url}")
+        print(f"   Params: {params}")
+        
+        try:
+            response = requests.get(url, headers=headers, params=params)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if 'candles' in data and data['candles']:
+                    candles = data['candles']
+                    print(f"✅ Retrieved {len(candles)} {frequency} candles from Schwab API")
+                    
+                    # For bootstrap, don't filter by existing data - get all historical data
+                    if is_bootstrap:
+                        new_candles = candles
+                        print(f"🔄 Bootstrap mode: Processing all {len(new_candles)} candles")
+                    else:
+                        # Filter for new data only
+                        last_timestamp = self.get_latest_timestamp_from_csv(symbol, frequency)
+                        new_candles = self.filter_new_data_for_frequency(candles, last_timestamp, frequency)
+                    
+                    if new_candles:
+                        # Calculate inverse data
+                        inverse_candles = self.calculate_inverse_candles(new_candles)
+                        print(f"🔄 Calculated {len(inverse_candles)} inverse candles from {len(new_candles)} regular candles")
+                        
+                        # Save regular data
+                        regular_success = self.append_to_csv(symbol, frequency, new_candles, inverse=False)
+                        
+                        # Save inverse data
+                        inverse_success = self.append_to_csv(symbol, frequency, inverse_candles, inverse=True)
+                        
+                        if regular_success and inverse_success:
+                            print(f"✅ {operation_type} data saved for {symbol}_{frequency} (regular + inverse)")
+                            return True
+                        else:
+                            print(f"❌ Failed to save {operation_type.lower()} data for {symbol}_{frequency}")
+                            return False
+                    else:
+                        print(f"📊 No new {frequency} data to save")
+                        return True
+                else:
+                    print(f"📊 No {frequency} candle data found in API response")
+                    return True
+            else:
+                print(f"❌ API request failed: {response.status_code}")
+                print(f"Response: {response.text}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Error fetching {operation_type.lower()} {frequency} price history: {e}")
+            return False 

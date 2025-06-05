@@ -1,339 +1,240 @@
-# Schwab Market Data Collection & Trading Signal System
+# Schwab Market API - Continuous Trading System
 
-## 🚀 **Automated Multi-Symbol, Multi-Timeframe Trading System**
+A comprehensive Python-based automated trading system that monitors multiple stock symbols across different timeframes using technical indicators and executes LONG/SHORT position signals via email notifications.
 
-A comprehensive, scheduled market data collection and trading signal analysis system that monitors **SPY, META, and AMZN** across **4 timeframes** (5m, 10m, 15m, 30m) for **LONG and SHORT position opportunities**.
+## 🚀 **System Overview**
 
-### **🎯 Key Features**
+This system provides fully automated trading signal generation with:
+- **Real-time monitoring** of 5 symbols: SPY, META, AMZN, NVDA, TSLA
+- **Multi-timeframe analysis**: 5m, 10m, 15m, 30m intervals  
+- **Dual position tracking**: LONG (regular) and SHORT (inverse) positions
+- **Technical indicators**: EMA, VWMA, MACD, ROC
+- **Automated email alerts** for position changes
+- **Comprehensive bootstrap** from historical data
+- **Market hours awareness** with automatic weekend handling
 
-- **📊 Multi-Symbol Monitoring**: SPY, META, AMZN (easily expandable)
-- **⏰ Multi-Timeframe Analysis**: 5-minute, 10-minute, 15-minute, 30-minute
-- **📈 LONG/SHORT Position Tracking**: Independent position states for each symbol/timeframe
-- **🔄 Real-Time Signal Detection**: 3-condition trading logic (EMA, MACD, ROC)
-- **📧 Instant Email Notifications**: Immediate alerts when positions open/close
-- **🕘 Scheduled Execution**: Cron-based automation for market hours
-- **🎯 Precision Trading**: Full numerical precision (no rounding errors)
-- **🔐 Secure Authentication**: Schwab API integration with token management
-
----
-
-## 📈 **Trading Strategy**
-
-### **Signal Conditions (Applied to Both LONG & SHORT)**
-
-1. **EMA Condition**: 7-period EMA > 17-period VWMA
-2. **MACD Condition**: MACD Line > MACD Signal
-3. **Momentum Condition**: 8-period ROC > 0%
-
-### **Position Logic**
-
-- **🟢 OPEN Position**: When ALL 3 conditions are met
-- **🔴 CLOSE Position**: When ≤1 condition remains (2+ conditions fail)
-
-### **LONG vs SHORT Positions**
-
-- **LONG Positions**: Based on regular price data
-- **SHORT Positions**: Based on inverse price data (1/price calculations)
-- Each symbol/timeframe maintains independent LONG and SHORT position states
-
----
-
-## 🏗️ **System Architecture**
+## 📊 **Architecture**
 
 ### **Core Components**
 
-```
-📁 schwab_market_api/
-├── 🎯 scheduled_coordinator.py    # Main execution engine (cron jobs run this)
-├── 📡 data_fetcher.py            # Direct frequency data collection
-├── 📊 indicator_calculator.py    # Technical indicator calculations
-├── 🎯 position_tracker.py        # LONG/SHORT position logic
-├── 📧 email_notifier.py          # Instant email notifications
-├── 🔐 schwab_auth.py             # API authentication management
-├── 🔍 status_check.py            # System health monitoring
-├── 📋 cron_jobs.md               # Complete cron job configuration
-└── 📄 README.md                  # This documentation
-```
+1. **`continuous_trader.py`** - Main orchestrator with multi-threaded execution
+2. **`scheduled_coordinator.py`** - Trading logic coordinator with bootstrap functionality  
+3. **`data_fetcher.py`** - Schwab API integration with historical data management
+4. **`indicator_calculator.py`** - Technical indicator calculations (EMA, VWMA, MACD, ROC)
+5. **`position_tracker.py`** - Position state management and signal generation
+6. **`email_notifier.py`** - Email notification system for trading signals
+7. **`schwab_auth.py`** - Schwab API authentication and token management
 
-### **Data Files (Auto-Generated)**
+### **Trading Logic**
 
-```
-📁 data/
-├── SPY_5m.csv, SPY_5m_INVERSE.csv       # SPY 5-minute data
-├── SPY_10m.csv, SPY_10m_INVERSE.csv     # SPY 10-minute data
-├── SPY_15m.csv, SPY_15m_INVERSE.csv     # SPY 15-minute data
-├── SPY_30m.csv, SPY_30m_INVERSE.csv     # SPY 30-minute data
-├── META_5m.csv, META_5m_INVERSE.csv     # META data (all timeframes)
-├── META_10m.csv, META_10m_INVERSE.csv
-├── META_15m.csv, META_15m_INVERSE.csv
-├── META_30m.csv, META_30m_INVERSE.csv
-├── AMZN_5m.csv, AMZN_5m_INVERSE.csv     # AMZN data (all timeframes)
-├── AMZN_10m.csv, AMZN_10m_INVERSE.csv
-├── AMZN_15m.csv, AMZN_15m_INVERSE.csv
-└── AMZN_30m.csv, AMZN_30m_INVERSE.csv
-```
+**Position Opening Conditions** (ALL must be met):
+1. **EMA Condition**: EMA(7) > VWMA(17) 
+2. **MACD Condition**: MACD Line > MACD Signal
+3. **ROC Condition**: ROC(8) > 0
 
----
+**Position Closing Conditions** (≤1 condition remaining):
+- Positions close when 2 or more conditions fail
 
-## ⚡ **Scheduled Execution Workflow**
+**Position Constraints**:
+- Maximum 1 LONG + 1 SHORT position per timeframe per symbol
+- 24 total position trackers (5 symbols × 4 timeframes × 2 directions)
 
-Each cron job executes this complete workflow:
-
-1. **🔐 Authentication Check** → Skip if invalid
-2. **🕘 Market Hours Validation** → Skip if closed
-3. **📡 Fetch New Data** → Only incremental updates
-4. **➕ Append to CSV** → Add to existing files
-5. **📊 Calculate Indicators** → Process new candles only
-6. **🎯 Analyze Signals** → Check latest data point for position changes
-7. **📧 Send Email Alerts** → Instant notifications if positions open/close
-
----
-
-## 🛠️ **Setup Instructions**
+## 🔧 **Installation & Setup**
 
 ### **1. Install Dependencies**
-
 ```bash
-pip install pandas requests pytz python-dotenv
+pip install -r requirements.txt
 ```
 
-### **2. Configure Schwab API Credentials**
-
-```bash
-# Create credentials file
-cp schwab_credentials.env.example schwab_credentials.env
-
-# Edit with your Schwab API credentials
-nano schwab_credentials.env
+### **2. Configure Schwab API**
+Create `schwab_credentials.env`:
+```env
+SCHWAB_CLIENT_ID=your_client_id
+SCHWAB_CLIENT_SECRET=your_client_secret  
+SCHWAB_REDIRECT_URI=your_redirect_uri
 ```
 
 ### **3. Configure Email Notifications**
-
-```bash
-# Create email configuration
-cp email_credentials.env.example email_credentials.env
-
-# Edit with your email settings
-nano email_credentials.env
+Create `email_credentials.env`:
+```env
+SMTP_SERVER=smtp.gmail.com
+SMTP_PORT=587
+EMAIL_ADDRESS=your_email@gmail.com
+EMAIL_PASSWORD=your_app_password
+RECIPIENT_EMAIL=recipient@gmail.com
 ```
 
-### **4. Test System Status**
-
+### **4. Authenticate with Schwab**
 ```bash
-# Check if everything is configured correctly
-python status_check.py
+python3 schwab_auth.py
+```
+Follow the OAuth flow to generate access tokens.
+
+## 🎯 **Usage**
+
+### **Quick Start**
+```bash
+# Start with default symbols (SPY, META, AMZN, NVDA, TSLA)
+./start_trading.sh
 ```
 
-### **5. Bootstrap Initial Data**
-
+### **Custom Symbols**
 ```bash
-# Load historical data for all symbols/timeframes
-python scheduled_coordinator.py SPY 5m --mode bootstrap
-python scheduled_coordinator.py META 15m --mode bootstrap
-python scheduled_coordinator.py AMZN 30m --mode bootstrap
+# Run with custom symbols
+python3 continuous_trader.py "AAPL,GOOGL,MSFT"
 ```
 
-### **6. Deploy Cron Jobs**
-
+### **Advanced Options**
 ```bash
-# Edit crontab
-crontab -e
-
-# Copy the complete configuration from cron_jobs.md
-# This sets up 24 scheduled jobs (12 data streams + 12 bootstrap jobs)
+# Custom health check interval (default: 4 minutes)
+python3 continuous_trader.py "SPY,META,AMZN" --health-interval 300
 ```
 
----
-
-## 🕘 **Cron Job Schedule**
-
-### **Data Collection Jobs**
-
-- **5-minute**: Every 5 minutes during market hours
-- **10-minute**: Every 10 minutes during market hours
-- **15-minute**: Every 15 minutes during market hours
-- **30-minute**: Every 30 minutes during market hours
-
-### **Market Hours**: 9:30 AM - 4:00 PM ET, Monday-Friday
-
-### **Example Cron Jobs**
-
+### **Reliable All-Day Operation**
 ```bash
-# SPY 5-minute data collection
-*/5 9-16 * * 1-5 cd /path/to/schwab_market_api && python scheduled_coordinator.py SPY 5m
-
-# META 15-minute data collection
-0,15,30,45 9-16 * * 1-5 cd /path/to/schwab_market_api && python scheduled_coordinator.py META 15m
-
-# AMZN 30-minute data collection
-0,30 9-16 * * 1-5 cd /path/to/schwab_market_api && python scheduled_coordinator.py AMZN 30m
+# Run with nohup and caffeinate for maximum reliability
+nohup caffeinate -s python3 continuous_trader.py "SPY,META,AMZN,NVDA,TSLA" > logs/nohup.log 2>&1 &
 ```
 
-**📋 Complete configuration available in `cron_jobs.md`**
+## ⏰ **Execution Schedule**
 
----
+The system runs continuously during market hours (9:30 AM - 4:00 PM ET) with:
 
-## 📊 **Position Tracking**
+- **5-minute jobs**: 9:30:05, 9:35:05, 9:40:05...
+- **10-minute jobs**: 9:30:05, 9:40:05, 9:50:05...  
+- **15-minute jobs**: 9:30:05, 9:45:05, 10:00:05...
+- **30-minute jobs**: 9:30:05, 10:00:05, 10:30:05...
 
-### **24 Independent Position Trackers**
+**Note**: 5-second offset ensures complete candle data availability.
 
-- **SPY**: 4 timeframes × 2 position types (LONG/SHORT) = 8 trackers
-- **META**: 4 timeframes × 2 position types = 8 trackers
-- **AMZN**: 4 timeframes × 2 position types = 8 trackers
+## 🔄 **Bootstrap Process**
 
-### **Position States**
+On startup, the system performs comprehensive bootstrap:
 
-- `CLOSED` → All position states start closed
-- `OPENED` → Position opened when all 3 conditions met
-- `CLOSED` → Position closed when ≤1 condition remains
+1. **Historical Data Fetch**: Previous trading day + today's complete candles
+2. **Indicator Calculation**: Technical indicators for all historical data  
+3. **Position Analysis**: Replay all historical signals (emails suppressed)
+4. **State Restoration**: Set current position states based on historical analysis
 
-### **Email Notifications Include**
+This ensures the system continues exactly where it left off with accurate position tracking.
 
-- **Position Opens**: Entry price, conditions met, market context
-- **Position Closes**: Exit price, P&L calculation, profit/loss analysis
-- **Real-time delivery**: Sent immediately when signals occur
+## 🏥 **Health Monitoring**
 
----
+**Automatic Health Checks** (every 4 minutes):
+- Market hours validation
+- Authentication status
+- Worker thread monitoring  
+- Position status reporting
+- Auto-refresh of expired tokens
 
-## 🔍 **Monitoring & Troubleshooting**
-
-### **Check System Status**
-
-```bash
-python status_check.py
-```
-
-### **Monitor Execution Logs**
-
-```bash
-# View specific symbol/timeframe logs
-tail -f /var/log/schwab_SPY_5m.log
-tail -f /var/log/schwab_META_15m.log
-
-# Monitor all execution logs
-tail -f /var/log/schwab_*.log
-```
-
-### **Manual Testing**
-
-```bash
-# Test complete workflow
-python scheduled_coordinator.py SPY 5m
-
-# Test bootstrap mode
-python scheduled_coordinator.py META 10m --mode bootstrap
-
-# Test analysis only
-python scheduled_coordinator.py AMZN 15m --mode analysis
-```
-
-### **Verify Cron Jobs**
-
-```bash
-# List active cron jobs
-crontab -l
-
-# Check cron service status
-sudo systemctl status cron
-```
-
----
-
-## 📈 **Trading Performance**
-
-### **Signal Detection**
-
-- **Real-time analysis**: Checks latest data point only (not historical re-analysis)
-- **Precision calculations**: Full numerical precision maintained throughout
-- **Multi-timeframe**: Independent signals across all timeframes
-- **Dual direction**: Simultaneous LONG and SHORT opportunity detection
-
-### **Data Efficiency**
-
-- **Incremental updates**: Only fetches new data since last execution
-- **Direct frequency collection**: No aggregation needed (5m, 10m, 15m, 30m from API)
-- **Smart filtering**: Excludes incomplete/forming candles
-- **Authentication optimization**: Proactive token refresh
-
----
-
-## 🎯 **Usage Examples**
-
-### **Single Symbol/Timeframe Execution**
-
-```bash
-# Run SPY 5-minute complete workflow
-python scheduled_coordinator.py SPY 5m
-
-# Bootstrap META 15-minute historical data
-python scheduled_coordinator.py META 15m --mode bootstrap
-
-# Analyze AMZN 30-minute signals only
-python scheduled_coordinator.py AMZN 30m --mode analysis
-```
-
-### **System Health Check**
-
-```bash
-# Complete system status
-python status_check.py
-
-# Expected output:
-# ✅ Authentication: Valid
-# ✅ Email Notifications: Configured
-# ✅ Data Streams: 12/12 active
-# ✅ Overall Status: 🚀 READY
-```
-
----
-
-## 🚀 **Key Advantages**
-
-- **🎯 Precision**: Full numerical precision prevents signal accuracy issues
-- **⚡ Efficiency**: Incremental data updates, no redundant processing
-- **🔄 Scalability**: Easy to add new symbols or timeframes
-- **📧 Real-time**: Instant email notifications when positions change
-- **🛡️ Reliability**: Market hours validation, authentication checks
-- **📊 Comprehensive**: 24 concurrent position trackers
-- **🕘 Automated**: Complete hands-off operation via cron jobs
-- **🏗️ Modern Architecture**: Clean, modular design with direct frequency fetching
-
-### **🔄 Recent Architectural Improvements**
-
-- ✅ **Eliminated aggregation complexity**: Direct API fetching for each timeframe
-- ✅ **Removed legacy components**: Streamlined codebase with `scheduled_coordinator.py`
-- ✅ **Enhanced modularity**: Independent, reusable components
-- ✅ **Improved efficiency**: No redundant data processing or computation
-- ✅ **Simplified deployment**: Single command execution via cron jobs
-
----
-
-## 📋 **File Structure Summary**
+## 📁 **File Structure**
 
 ```
 schwab_market_api/
-├── 🎯 Core System
-│   ├── scheduled_coordinator.py     # Main execution engine
-│   ├── data_fetcher.py             # Market data collection
-│   ├── indicator_calculator.py     # Technical analysis
-│   ├── position_tracker.py         # Trading signal logic
-│   ├── email_notifier.py           # Alert system
-│   └── schwab_auth.py              # API authentication
-├── 🔧 Utilities
-│   ├── status_check.py             # System health monitoring
-│   └── cron_jobs.md                # Deployment configuration
-├── 📄 Documentation
-│   ├── README.md                   # This file
-│   ├── schwab_credentials.env.example
-│   └── email_credentials.env.example
-└── 📊 Data (Auto-generated)
-    └── data/                       # CSV files for all symbols/timeframes
+├── continuous_trader.py          # Main continuous trading system
+├── scheduled_coordinator.py      # Trading logic coordinator
+├── data_fetcher.py               # Schwab API data fetching
+├── indicator_calculator.py       # Technical indicator calculations
+├── position_tracker.py           # Position management & signals
+├── email_notifier.py             # Email notification system
+├── schwab_auth.py                # API authentication
+├── start_trading.sh              # Quick start script
+├── data/                         # CSV data storage
+│   ├── SPY_5m.csv               # Regular price data
+│   ├── SPY_5m_INVERSE.csv       # Inverse price data
+│   └── ...                      # Other symbols/timeframes
+├── logs/                         # System logs
+│   ├── continuous_trader.log    # Main system log
+│   └── nohup.log               # Background execution log
+├── position_states.json         # Current position states
+├── schwab_credentials.env       # API credentials
+├── email_credentials.env        # Email configuration
+└── requirements.txt             # Python dependencies
 ```
+
+## 📧 **Email Notifications**
+
+Automated emails are sent for:
+- **Position openings**: When all 3 conditions are met
+- **Position closings**: When ≤1 condition remains  
+- **System alerts**: Authentication issues, errors
+
+**Email includes**:
+- Symbol and timeframe
+- Position type (LONG/SHORT)
+- Action (OPEN/CLOSE)
+- Current price
+- P&L information (for closings)
+- Technical condition status
+
+## 🔧 **System Management**
+
+### **Monitor System**
+```bash
+# Check if running
+ps aux | grep continuous_trader
+
+# View live logs  
+tail -f logs/continuous_trader.log
+
+# View background logs
+tail -f logs/nohup.log
+```
+
+### **Stop System**
+```bash
+# Graceful shutdown
+pkill -f continuous_trader.py
+
+# Force stop if needed
+pkill -9 -f continuous_trader.py
+```
+
+### **Restart System**
+```bash
+# Quick restart with default symbols
+./start_trading.sh
+
+# Or reliable all-day restart
+nohup caffeinate -s python3 continuous_trader.py "SPY,META,AMZN,NVDA,TSLA" > logs/nohup.log 2>&1 &
+```
+
+## 💡 **Key Features**
+
+✅ **Comprehensive Coverage**: 5 symbols × 4 timeframes × 2 directions = 40 trading scenarios  
+✅ **Real-time Execution**: Multi-threaded design with precise timing  
+✅ **Historical Continuity**: Bootstrap ensures accurate position states  
+✅ **Market Aware**: Automatic weekend/holiday handling  
+✅ **Robust Architecture**: Health monitoring with auto-recovery  
+✅ **Production Ready**: Designed for reliable all-day operation  
+✅ **Email Integration**: Instant notifications for all trading signals  
+✅ **Data Integrity**: Duplicate prevention and incomplete candle filtering
+
+## ⚠️ **Important Notes**
+
+- **Paper Trading**: This system generates signals only - no actual trades are executed
+- **Market Hours**: Operates only during regular trading hours (9:30 AM - 4:00 PM ET)
+- **Data Dependencies**: Requires active Schwab API access
+- **Email Setup**: Ensure email credentials are configured for notifications
+- **System Resources**: Multi-threaded design - monitor CPU/memory usage
+
+## 🛡️ **Reliability Features**
+
+- **Sleep Prevention**: `caffeinate` keeps system awake during trading hours
+- **Background Execution**: `nohup` ensures operation continues if terminal closes  
+- **Graceful Shutdown**: Handles interruption signals properly
+- **Auto-Recovery**: Automatic token refresh and error handling
+- **Comprehensive Logging**: Full audit trail of all operations
+
+## 📈 **Trading Performance**
+
+The system tracks and reports:
+- Total signals generated per symbol/timeframe
+- Position opening/closing counts
+- P&L calculations for closed positions
+- Technical condition success rates
+- System uptime and reliability metrics
 
 ---
 
-## 🎉 **Ready for Production**
-
-Your automated trading system is ready to monitor **3 major stocks** across **4 timeframes** for **LONG and SHORT opportunities** using proven technical indicators, with instant email notifications and comprehensive logging.
-
-**Deploy with confidence!** 🚀📈📉
+**Built for automated trading signal generation with institutional-grade reliability and comprehensive market coverage.**

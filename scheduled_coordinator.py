@@ -144,7 +144,8 @@ class ScheduledCoordinator:
 
     def run_bootstrap(self, symbol: str, frequency: str) -> bool:
         """
-        Run initial bootstrap to fill any missing historical data
+        Run initial bootstrap to fill historical data from previous trading day
+        and analyze historical positions to continue where we left off
         
         Args:
             symbol: Stock symbol
@@ -153,45 +154,41 @@ class ScheduledCoordinator:
         Returns:
             True if successful, False otherwise
         """
-        print(f"\n🔄 Bootstrap Mode: Filling historical {frequency} data for {symbol}")
-        print("=" * 60)
+        print(f"\n🔄 Bootstrap Mode: Historical data + position analysis for {symbol}_{frequency}")
+        print("=" * 75)
         
-        # Determine target date for bootstrap
-        current_time = datetime.now(self.et_timezone)
-        target_date = None
+        # Step 1: Fetch bootstrap data from previous trading day 9:30AM ET
+        print(f"📡 Step 1: Fetching bootstrap data...")
+        fetch_success = self.data_fetcher.fetch_bootstrap_data(symbol, frequency)
         
-        # If outside market hours, use previous trading day
-        if not self.is_market_hours() or not self.is_market_day():
-            # Calculate previous trading day
-            days_back = 1
-            while True:
-                potential_date = current_time.date() - timedelta(days=days_back)
-                potential_weekday = datetime.combine(potential_date, datetime.min.time()).weekday()
-                if potential_weekday < 5:  # Monday = 0, Friday = 4
-                    target_date = potential_date
-                    break
-                days_back += 1
-            print(f"📅 Using previous trading day: {target_date}")
-        else:
-            print(f"📅 Using current trading day: {current_time.date()}")
-        
-        # Fetch data
-        fetch_success = self.data_fetcher.fetch_data_at_frequency(symbol, frequency, target_date)
-        
-        if fetch_success:
-            # Calculate indicators
-            regular_indicators = self.indicator_calculator.calculate_all_indicators(symbol, frequency, inverse=False)
-            inverse_indicators = self.indicator_calculator.calculate_all_indicators(symbol, frequency, inverse=True)
-            
-            if regular_indicators and inverse_indicators:
-                print(f"✅ Bootstrap completed for {symbol}_{frequency}")
-                return True
-            else:
-                print(f"⚠️  Bootstrap partially completed for {symbol}_{frequency}")
-                return False
-        else:
-            print(f"❌ Bootstrap failed for {symbol}_{frequency}")
+        if not fetch_success:
+            print(f"❌ Bootstrap data fetch failed for {symbol}_{frequency}")
             return False
+        
+        # Step 2: Calculate indicators for both regular and inverse data
+        print(f"\n📈 Step 2: Calculating indicators...")
+        regular_indicators = self.indicator_calculator.calculate_all_indicators(symbol, frequency, inverse=False)
+        inverse_indicators = self.indicator_calculator.calculate_all_indicators(symbol, frequency, inverse=True)
+        
+        indicators_success = regular_indicators and inverse_indicators
+        
+        if not indicators_success:
+            print(f"❌ Failed to calculate indicators for {symbol}_{frequency}")
+            return False
+        
+        # Step 3: Analyze historical positions to continue where we left off
+        print(f"\n🎯 Step 3: Analyzing historical positions (emails suppressed)...")
+        historical_analysis = self.position_tracker.analyze_historical_positions(symbol, suppress_emails=True)
+        
+        # Step 4: Summary
+        print(f"\n🔄 Bootstrap Summary for {symbol}_{frequency}:")
+        print(f"   Data Fetch: {'✅ Success' if fetch_success else '❌ Failed'}")
+        print(f"   Indicators: {'✅ Success' if indicators_success else '❌ Failed'}")
+        print(f"   Historical Analysis: {'✅ Complete' if historical_analysis else '❌ Failed'}")
+        print(f"   Total Historical Signals: {historical_analysis.get('total_signals', 0)}")
+        print(f"   Position States Ready: ✅ Ready for live trading")
+        
+        return True
 
     def run_analysis_only(self, symbol: str, frequency: str) -> bool:
         """
