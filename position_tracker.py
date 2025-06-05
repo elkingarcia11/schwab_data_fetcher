@@ -5,9 +5,12 @@ Handles position signals, P&L tracking, and email notifications for both LONG an
 - LONG positions: Based on regular price data conditions
 - SHORT positions: Based on inverse price data conditions
 - Same 3-condition logic applied to both types
+- Persistent state storage for cron job compatibility
 """
 
 import pandas as pd
+import json
+import os
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from indicator_calculator import IndicatorCalculator
@@ -18,32 +21,76 @@ class PositionTracker:
         self.indicator_calculator = IndicatorCalculator()
         self.email_notifier = EmailNotifier()
         
-        # Position states for each timeframe and type (5m, 10m, 15m, 30m)
-        # Structure: {timeframe: {'LONG': state, 'SHORT': state}}
-        self.position_states = {
+        # Position state file for persistence across cron jobs
+        self.state_file = 'position_states.json'
+        
+        # Load existing position states or initialize defaults
+        self.position_states, self.opening_prices, self.total_pnl = self._load_position_states()
+        
+    def _load_position_states(self) -> Tuple[Dict, Dict, Dict]:
+        """
+        Load position states from file or initialize defaults
+        
+        Returns:
+            Tuple of (position_states, opening_prices, total_pnl)
+        """
+        default_states = {
             '5m': {'LONG': 'CLOSED', 'SHORT': 'CLOSED'},
             '10m': {'LONG': 'CLOSED', 'SHORT': 'CLOSED'},
             '15m': {'LONG': 'CLOSED', 'SHORT': 'CLOSED'},
             '30m': {'LONG': 'CLOSED', 'SHORT': 'CLOSED'}
         }
         
-        # Track opening prices for P&L calculations (5m, 10m, 15m, 30m)
-        # Structure: {timeframe: {'LONG': price, 'SHORT': price}}
-        self.opening_prices = {
+        default_prices = {
             '5m': {'LONG': None, 'SHORT': None},
             '10m': {'LONG': None, 'SHORT': None},
             '15m': {'LONG': None, 'SHORT': None},
             '30m': {'LONG': None, 'SHORT': None}
         }
         
-        # Track total P&L for each timeframe and position type (5m, 10m, 15m, 30m)
-        # Structure: {timeframe: {'LONG': total_pnl, 'SHORT': total_pnl}}
-        self.total_pnl = {
+        default_pnl = {
             '5m': {'LONG': 0.0, 'SHORT': 0.0},
             '10m': {'LONG': 0.0, 'SHORT': 0.0},
             '15m': {'LONG': 0.0, 'SHORT': 0.0},
             '30m': {'LONG': 0.0, 'SHORT': 0.0}
         }
+        
+        if os.path.exists(self.state_file):
+            try:
+                with open(self.state_file, 'r') as f:
+                    data = json.load(f)
+                    
+                print(f"📊 Loaded position states from {self.state_file}")
+                return (
+                    data.get('position_states', default_states),
+                    data.get('opening_prices', default_prices),
+                    data.get('total_pnl', default_pnl)
+                )
+            except Exception as e:
+                print(f"⚠️  Error loading position states: {e}, using defaults")
+                return default_states, default_prices, default_pnl
+        else:
+            print(f"📊 No existing position states found, using defaults")
+            return default_states, default_prices, default_pnl
+    
+    def _save_position_states(self):
+        """
+        Save current position states to file for persistence
+        """
+        try:
+            data = {
+                'position_states': self.position_states,
+                'opening_prices': self.opening_prices,
+                'total_pnl': self.total_pnl,
+                'last_updated': datetime.now().isoformat()
+            }
+            
+            with open(self.state_file, 'w') as f:
+                json.dump(data, f, indent=2)
+                
+            print(f"💾 Position states saved to {self.state_file}")
+        except Exception as e:
+            print(f"❌ Error saving position states: {e}")
 
     def evaluate_trading_conditions(self, indicators: dict) -> Tuple[bool, bool, bool, int, str]:
         """
@@ -146,14 +193,29 @@ class PositionTracker:
         current_state = self.position_states[period][position_type]
         current_price = float(indicators['close'])
         
-        # Position logic
+        # Position logic with explicit safeguards
         if current_state == 'CLOSED' and conditions_met == 3:
+            # SAFEGUARD: Ensure only one position per type per timeframe
+            if self.position_states[period][position_type] != 'CLOSED':
+                print(f"⚠️  SAFEGUARD: Cannot open {position_type} position - already have {self.position_states[period][position_type]} position")
+                return result
+            
             # Open position when ALL 3 conditions are met
             self.position_states[period][position_type] = 'OPENED'
             self.opening_prices[period][position_type] = current_price
             result['action'] = 'OPEN'
             result['price'] = current_price
-            print(f"🚨 {position_type} POSITION OPENED: {symbol}_{period} at {current_price:.4f}")
+            
+            # Enhanced logging with position constraints
+            other_type = 'SHORT' if position_type == 'LONG' else 'LONG'
+            other_state = self.position_states[period][other_type]
+            concurrent_info = f" (concurrent {other_type}: {other_state})" if other_state == 'OPENED' else ""
+            
+            print(f"🚨 {position_type} POSITION OPENED: {symbol}_{period} at {current_price:.4f}{concurrent_info}")
+            print(f"   📊 Constraint: 1 {position_type} + 1 {other_type} max per timeframe - Currently: {position_type}=OPEN, {other_type}={other_state}")
+            
+            # Save state after opening position
+            self._save_position_states()
             
         elif current_state == 'OPENED' and conditions_met <= 1:
             # Close position when 2 or more conditions fail (≤1 condition remaining)
@@ -190,6 +252,21 @@ class PositionTracker:
             
             pnl_emoji = "📈" if pnl_dollar >= 0 else "📉"
             print(f"🚨 {position_type} POSITION CLOSED: {symbol}_{period} at {current_price:.4f} {pnl_emoji} ${pnl_dollar:.4f} ({pnl_percent:.2f}%)")
+            
+            # Save state after closing position
+            self._save_position_states()
+        
+        elif current_state == 'OPENED' and conditions_met == 3:
+            # Position already open with all conditions still met - no action needed
+            print(f"   📊 {position_type} position already OPEN for {symbol}_{period} (conditions: {conditions_met}/3)")
+        
+        elif current_state == 'CLOSED' and conditions_met < 3:
+            # Conditions not met for opening - no action needed
+            print(f"   📊 {position_type} position remains CLOSED for {symbol}_{period} (conditions: {conditions_met}/3)")
+        
+        elif current_state == 'OPENED' and 1 < conditions_met < 3:
+            # Position open but some conditions failing - monitor but don't close yet
+            print(f"   ⚠️  {position_type} position OPEN but conditions weakening for {symbol}_{period} (conditions: {conditions_met}/3)")
         
         return result
 
@@ -285,6 +362,9 @@ class PositionTracker:
             self.opening_prices[period]['SHORT'] = None
             self.total_pnl[period]['LONG'] = 0.0
             self.total_pnl[period]['SHORT'] = 0.0
+        
+        # Save reset state
+        self._save_position_states()
         
         for period in ['5m', '10m', '15m', '30m']:
             print(f"\n📊 Analyzing {period} historical data...")
@@ -462,4 +542,146 @@ class PositionTracker:
         overall_valid = long_valid and short_valid
         print(f"   📊 Overall validation: {'✅ Passed' if overall_valid else '❌ Failed'}")
         
-        return overall_valid 
+        return overall_valid
+
+    def validate_position_constraints(self) -> bool:
+        """
+        Validate that position constraints are maintained:
+        - Maximum 1 LONG position per timeframe
+        - Maximum 1 SHORT position per timeframe
+        - LONG and SHORT can coexist in same timeframe
+        
+        Returns:
+            True if constraints are satisfied, False otherwise
+        """
+        print("🔍 Validating position constraints...")
+        
+        constraints_valid = True
+        
+        for period in ['5m', '10m', '15m', '30m']:
+            long_state = self.position_states[period]['LONG']
+            short_state = self.position_states[period]['SHORT']
+            long_price = self.opening_prices[period]['LONG']
+            short_price = self.opening_prices[period]['SHORT']
+            
+            # Check for state consistency
+            if long_state == 'OPENED' and long_price is None:
+                print(f"❌ {period} LONG: State is OPENED but no opening price recorded")
+                constraints_valid = False
+                
+            if short_state == 'OPENED' and short_price is None:
+                print(f"❌ {period} SHORT: State is OPENED but no opening price recorded")
+                constraints_valid = False
+                
+            if long_state == 'CLOSED' and long_price is not None:
+                print(f"⚠️  {period} LONG: State is CLOSED but opening price still recorded ({long_price})")
+                # Auto-fix this inconsistency
+                self.opening_prices[period]['LONG'] = None
+                
+            if short_state == 'CLOSED' and short_price is not None:
+                print(f"⚠️  {period} SHORT: State is CLOSED but opening price still recorded ({short_price})")
+                # Auto-fix this inconsistency
+                self.opening_prices[period]['SHORT'] = None
+            
+            # Display current state
+            long_emoji = "🟢" if long_state == 'OPENED' else "🔴"
+            short_emoji = "🟢" if short_state == 'OPENED' else "🔴"
+            print(f"   {period}: LONG={long_emoji}{long_state}, SHORT={short_emoji}{short_state}")
+            
+            # Show concurrent positions
+            if long_state == 'OPENED' and short_state == 'OPENED':
+                print(f"   📊 {period}: BOTH positions open simultaneously (allowed)")
+        
+        if constraints_valid:
+            print("✅ All position constraints satisfied")
+        else:
+            print("❌ Position constraint violations detected")
+            # Save any auto-fixes
+            self._save_position_states()
+        
+        return constraints_valid
+
+    def get_position_summary(self) -> Dict:
+        """
+        Get summary of current positions across all timeframes
+        
+        Returns:
+            Dictionary with position summary
+        """
+        summary = {
+            'total_open_positions': 0,
+            'open_longs': 0,
+            'open_shorts': 0,
+            'timeframes_with_positions': [],
+            'concurrent_timeframes': []  # Timeframes with both LONG and SHORT open
+        }
+        
+        for period in ['5m', '10m', '15m', '30m']:
+            long_open = self.position_states[period]['LONG'] == 'OPENED'
+            short_open = self.position_states[period]['SHORT'] == 'OPENED'
+            
+            if long_open:
+                summary['open_longs'] += 1
+                summary['total_open_positions'] += 1
+                if period not in summary['timeframes_with_positions']:
+                    summary['timeframes_with_positions'].append(period)
+            
+            if short_open:
+                summary['open_shorts'] += 1
+                summary['total_open_positions'] += 1
+                if period not in summary['timeframes_with_positions']:
+                    summary['timeframes_with_positions'].append(period)
+            
+            if long_open and short_open:
+                summary['concurrent_timeframes'].append(period)
+        
+        return summary
+
+    def display_current_position_states(self) -> None:
+        """
+        Display current position states loaded from persistent storage
+        """
+        print("\n📊 Current Position States (from persistent storage):")
+        print("=" * 60)
+        
+        # Get position summary first
+        summary = self.get_position_summary()
+        
+        for period in ['5m', '10m', '15m', '30m']:
+            long_state = self.position_states[period]['LONG']
+            short_state = self.position_states[period]['SHORT']
+            long_price = self.opening_prices[period]['LONG']
+            short_price = self.opening_prices[period]['SHORT']
+            long_pnl = self.total_pnl[period]['LONG']
+            short_pnl = self.total_pnl[period]['SHORT']
+            
+            print(f"\n🕘 {period} Timeframe:")
+            print(f"   LONG:  {long_state:<6} | Opening: {f'${long_price:.4f}' if long_price else 'N/A':<10} | Total P&L: ${long_pnl:>8.2f}")
+            print(f"   SHORT: {short_state:<6} | Opening: {f'${short_price:.4f}' if short_price else 'N/A':<10} | Total P&L: ${short_pnl:>8.2f}")
+            
+            # Show concurrent positions
+            if long_state == 'OPENED' and short_state == 'OPENED':
+                print(f"   🔥 BOTH LONG & SHORT positions open (maximum allowed)")
+            elif long_state == 'OPENED':
+                print(f"   📈 LONG position open (1 more SHORT allowed)")
+            elif short_state == 'OPENED':
+                print(f"   📉 SHORT position open (1 more LONG allowed)")
+            else:
+                print(f"   💤 No positions open (1 LONG + 1 SHORT available)")
+        
+        # Show file info
+        if os.path.exists(self.state_file):
+            with open(self.state_file, 'r') as f:
+                data = json.load(f)
+                last_updated = data.get('last_updated', 'Unknown')
+                print(f"\n💾 State file: {self.state_file}")
+                print(f"📅 Last updated: {last_updated}")
+        
+        # Show constraint summary
+        print(f"\n📊 Position Constraint Summary:")
+        print(f"   Total Open: {summary['total_open_positions']} positions ({summary['open_longs']} LONG, {summary['open_shorts']} SHORT)")
+        print(f"   Active Timeframes: {summary['timeframes_with_positions'] if summary['timeframes_with_positions'] else 'None'}")
+        print(f"   Concurrent (L+S): {summary['concurrent_timeframes'] if summary['concurrent_timeframes'] else 'None'}")
+        print(f"   🔒 Constraint: Max 1 LONG + 1 SHORT per timeframe")
+        
+        print("=" * 60) 

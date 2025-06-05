@@ -1,0 +1,57 @@
+{
+  "position_states": {
+    "5m": {
+      "LONG": "CLOSED",
+      "SHORT": "OPENED"
+    },
+    "10m": {
+      "LONG": "CLOSED",
+      "SHORT": "CLOSED"
+    },
+    "15m": {
+      "LONG": "CLOSED",
+      "SHORT": "CLOSED"
+    },
+    "30m": {
+      "LONG": "CLOSED",
+      "SHORT": "CLOSED"
+    }
+  },
+  "opening_prices": {
+    "5m": {
+      "LONG": null,
+      "SHORT": 0.0016781339150864
+    },
+    "10m": {
+      "LONG": null,
+      "SHORT": null
+    },
+    "15m": {
+      "LONG": null,
+      "SHORT": null
+    },
+    "30m": {
+      "LONG": null,
+      "SHORT": null
+    }
+  },
+  "total_pnl": {
+    "5m": {
+      "LONG": 0.0,
+      "SHORT": 0.0
+    },
+    "10m": {
+      "LONG": 0.0,
+      "SHORT": 0.0
+    },
+    "15m": {
+      "LONG": 0.0,
+      "SHORT": 0.0
+    },
+    "30m": {
+      "LONG": 0.0,
+      "SHORT": 0.0
+    }
+  },
+  "last_updated": "2025-06-05T00:49:42.172532"
+}

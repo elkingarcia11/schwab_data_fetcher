@@ -39,15 +39,15 @@ class EmailNotifier:
                         
                         if key == "EMAIL_ALERTS_ENABLED":
                             self.enabled = value.lower() == 'true'
-                        elif key == "EMAIL_SENDER":
+                        elif key == "SENDER_EMAIL":
                             self.sender = value
-                        elif key == "EMAIL_PASSWORD":
+                        elif key == "SENDER_PASSWORD":
                             self.password = value
-                        elif key == "EMAIL_TO":
+                        elif key == "TO_EMAILS":
                             self.recipients = [email.strip() for email in value.split(',')]
-                        elif key == "EMAIL_SMTP_SERVER":
+                        elif key == "SMTP_SERVER":
                             self.smtp_server = value
-                        elif key == "EMAIL_SMTP_PORT":
+                        elif key == "SMTP_PORT":
                             self.smtp_port = int(value)
             
             if self.enabled:
